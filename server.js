@@ -1,49 +1,51 @@
 import express from "express";
+import bodyParser from "body-parser";
 import fetch from "node-fetch";
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-// ✅ License verification endpoint
+// Read Payhip API key from environment
+const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
+
+// License verification endpoint
 app.post("/verify", async (req, res) => {
-  const { license, product } = req.body;
+  const { licenseKey } = req.body;
 
-  if (!license) {
-    return res.status(400).json({ status: "error", message: "No license key provided" });
+  if (!licenseKey) {
+    return res.json({ status: "error", message: "No license key provided" });
   }
 
   try {
-    // 🔑 Step 1: Check license with Payhip API
-    const payhipRes = await fetch("https://payhip.com/api/v2/licenses/verify", {
+    // Call Payhip API
+    const response = await fetch("https://payhip.com/api/v2/licenses/verify", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer YOUR_PAYHIP_API_KEY", // 👈 replace this later
-        "Content-Type": "application/json"
+        "Authorization": `Bearer ${PAYHIP_API_KEY}`,
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ license_key: license })
+      body: JSON.stringify({ license_key: licenseKey }),
     });
 
-    const data = await payhipRes.json();
+    const data = await response.json();
 
-    // 🔍 Step 2: Respond to HISE
     if (data.valid) {
-      return res.json({
-        status: "ok",
-        message: "License valid",
-        product: product || data.product_name
-      });
+      res.json({ status: "success", message: "License is valid" });
     } else {
-      return res.json({
-        status: "error",
-        message: data.message || "License invalid"
-      });
+      res.json({ status: "error", message: "Invalid or expired license" });
     }
 
-  } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).json({ status: "error", message: "Server failed to contact Payhip" });
+  } catch (error) {
+    console.error("Verification error:", error);
+    res.status(500).json({ status: "error", message: "Server error verifying license" });
   }
 });
 
-// ✅ Start the server
-app.listen(3000, () => console.log("License server running on port 3000"));
+// Test route
+app.get("/", (req, res) => {
+  res.send("Mila License Server is running ✅");
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
