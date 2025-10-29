@@ -12,32 +12,30 @@ const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
 app.post("/verify", async (req, res) => {
   const { licenseKey } = req.body;
 
-  if (!licenseKey) {
-    return res.json({ status: "error", message: "No license key provided" });
-  }
-
   try {
-    // Call Payhip API
-    const response = await fetch("https://payhip.com/api/v2/licenses/verify", {
+    const response = await fetch("https://payhip.com/api/v1/licenses/verify", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${PAYHIP_API_KEY}`,
-        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.PAYHIP_API_KEY}`,
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify({ license_key: licenseKey }),
+      body: JSON.stringify({
+        product_id: "YOUR_PRODUCT_ID", // replace this with your actual Payhip product ID
+        license: licenseKey
+      })
     });
 
     const data = await response.json();
+    console.log("Verification response:", data);
 
-    if (data.valid) {
-      res.json({ status: "success", message: "License is valid" });
+    if (data.success) {
+      res.json({ status: "success", message: "License valid" });
     } else {
-      res.json({ status: "error", message: "Invalid or expired license" });
+      res.json({ status: "error", message: "Invalid license" });
     }
-
-  } catch (error) {
-    console.error("Verification error:", error);
-    res.status(500).json({ status: "error", message: "Server error verifying license" });
+  } catch (err) {
+    console.error("Verification error:", err);
+    res.json({ status: "error", message: "Server error verifying license" });
   }
 });
 
