@@ -1,23 +1,48 @@
-const express = require("express");
+// server.js
+import express from "express";
+import bodyParser from "body-parser";
+
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
+// --- Temporary in-memory "database" of valid keys ---
+const validLicenses = {
+  "12345-ABCDE": { product: "Tamaduni Player", user: "Demo User" },
+  "67890-ZYXWV": { product: "Tamaduni Player", user: "Another User" }
+};
+
+// --- License verification endpoint ---
 app.post("/verify", (req, res) => {
-  const { license, product } = req.body;
+  const { license, product } = req.body || {};
 
-  if (!license) {
-    return res.json({ status: "error", message: "No license provided" });
+  console.log("License request received:", license, product);
+
+  if (!license || !product) {
+    return res.json({ status: "error", message: "Missing license or product." });
   }
 
-  // Example logic:
-  if (license === "12345-ABCDE") {
-    return res.json({ status: "success", message: "License valid" });
+  const licenseData = validLicenses[license];
+
+  if (!licenseData) {
+    return res.json({ status: "error", message: "Invalid license key." });
   }
 
-  res.json({ status: "error", message: "Invalid license" });
+  if (licenseData.product !== product) {
+    return res.json({ status: "error", message: "Product mismatch." });
+  }
+
+  return res.json({
+    status: "ok",
+    message: "License activated successfully.",
+    product: licenseData.product,
+    user: licenseData.user
+  });
 });
 
-app.get("/", (req, res) => res.send("Mila Afrika License API running..."));
+// Root route
+app.get("/", (req, res) => {
+  res.send("Mila License Server is running ✅");
+});
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
