@@ -87,27 +87,32 @@ app.post("/validate-license", async (req, res) => {
   }
 });
 
-// === Payhip Webhook Endpoint ===
-app.post("/payhip-webhook", async (req, res) => {
+// === Payhip Webhook Endpoint (Fixed) ===
+app.post("/payhip-webhook", express.urlencoded({ extended: true }), async (req, res) => {
   try {
-    console.log("📦 Received webhook from Payhip:", req.body);
+    // Handle both JSON and URL-encoded payloads
+    const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    console.log("📦 Received webhook from Payhip:", payload);
 
-    // Correctly extract nested license info
-    const item = req.body.items && req.body.items[0];
+    const items = payload.items || [];
+    const item = items.length > 0 ? items[0] : null;
+
     if (!item) {
       console.log("❌ No item found in webhook payload");
-      return res.status(400).json({ success: false });
+      return res.status(400).json({ success: false, message: "No items in payload" });
     }
 
-    const { license_key, product_id, product_name } = item;
-    const buyer_email = req.body.email;
+    const license_key = item.license_key;
+    const product_id = item.product_id;
+    const product_name = item.product_name;
+    const buyer_email = payload.email;
 
     if (!license_key || !product_id) {
-      console.log("❌ Missing license_key or product_id in webhook payload");
-      return res.status(400).json({ success: false });
+      console.log("❌ Missing license_key or product_id in webhook payload:", item);
+      return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    // Store license in memory & file
+    // Save license locally
     licenses[license_key] = {
       product_id,
       product_name,
@@ -115,15 +120,17 @@ app.post("/payhip-webhook", async (req, res) => {
       activated: false,
       createdAt: new Date().toISOString(),
     };
-    saveLicenses();
 
+    saveLicenses();
     console.log(`✅ Stored new license: ${license_key}`);
-    res.json({ success: true });
+
+    return res.json({ success: true });
   } catch (error) {
     console.error("❌ Error handling webhook:", error);
-    res.status(500).json({ success: false });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
+
 
 // === Debug Endpoint (View All Licenses) ===
 app.get("/licenses", (req, res) => {
