@@ -46,15 +46,25 @@ app.post("/payhip-webhook", async (req, res) => {
   try {
     console.log("📦 Received webhook from Payhip:", req.body);
 
-    const { license_key, product_id, buyer_email } = req.body;
+    // Extract license info correctly from nested payload
+    const item = req.body.items && req.body.items[0];
+    if (!item) {
+      console.log("❌ No item found in webhook payload");
+      return res.status(400).json({ success: false });
+    }
+
+    const { license_key, product_id, product_name } = item;
+    const buyer_email = req.body.email;
 
     if (!license_key || !product_id) {
       console.log("❌ Missing license_key or product_id in webhook payload");
       return res.status(400).json({ success: false });
     }
 
+    // Store license info
     licenses[license_key] = {
       product_id,
+      product_name,
       buyer_email,
       activated: false,
       createdAt: new Date().toISOString(),
@@ -69,6 +79,7 @@ app.post("/payhip-webhook", async (req, res) => {
     res.status(500).json({ success: false });
   }
 });
+
 
 /**
  * 🔑 Validate License Endpoint
