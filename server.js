@@ -20,7 +20,7 @@ app.post("/validate-license", async (req, res) => {
   try {
     console.log("🔍 Sending request to Payhip API...");
 
-    const response = await fetch("https://payhip.com/api/v1/licenses/verify", {
+    const response = await fetch("https://payhip.com/api/v2/licenses/verify", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${PAYHIP_API_KEY}`,
