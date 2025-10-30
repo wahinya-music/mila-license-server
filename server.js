@@ -17,7 +17,7 @@ app.post("/validate-license", async (req, res) => {
 
   try {
     const response = await axios.post(
-      "https://api.payhip.com/v1/licenses/verify",
+      "https://api.payhip.com/v2/licenses/verify",
       {
         product: PAYHIP_PRODUCT_KEY,
         license: licenseKey,
