@@ -1,104 +1,83 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import fs from "fs";
 
 dotenv.config();
 const app = express();
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
-const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
-const PAYHIP_PRODUCT_KEY = process.env.PAYHIP_PRODUCT_KEY;
 
-// === Basic JSON file persistence ===
-const LICENSES_FILE = "./licenses.json";
+// === Global Middleware ===
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // <— important for Payhip webhooks
+
+// === License persistence ===
+const LICENSE_FILE = path.resolve("./licenses.json");
 let licenses = {};
 
-// Load licenses from file on startup
-if (fs.existsSync(LICENSES_FILE)) {
+function loadLicenses() {
   try {
-    const raw = fs.readFileSync(LICENSES_FILE, "utf8");
-    licenses = JSON.parse(raw);
-    console.log(`📂 Loaded ${Object.keys(licenses).length} licenses from file.`);
+    if (fs.existsSync(LICENSE_FILE)) {
+      const data = fs.readFileSync(LICENSE_FILE, "utf-8");
+      licenses = JSON.parse(data);
+      console.log("✅ Licenses loaded:", Object.keys(licenses).length);
+    }
   } catch (err) {
-    console.error("⚠️ Failed to load licenses file:", err);
+    console.error("❌ Failed to load licenses:", err);
   }
 }
 
-// Save licenses to file
-const saveLicenses = () => {
-  fs.writeFileSync(LICENSES_FILE, JSON.stringify(licenses, null, 2));
-  console.log("💾 Licenses saved to file.");
-};
+function saveLicenses() {
+  fs.writeFileSync(LICENSE_FILE, JSON.stringify(licenses, null, 2));
+}
 
-// === License Validation Endpoint ===
+// === Root route ===
+app.get("/", (req, res) => {
+  res.send("✅ Mila License Server is running.");
+});
+
+// === License validation route ===
 app.post("/validate-license", async (req, res) => {
-  const { licenseKey } = req.body;
-  if (!licenseKey)
-    return res.status(400).json({ success: false, message: "Missing licenseKey" });
-
   try {
-    console.log("🔍 Sending request to Payhip API...");
+    const { licenseKey } = req.body;
+    if (!licenseKey)
+      return res.status(400).json({ success: false, message: "Missing license key" });
 
-    const response = await fetch("https://payhip.com/api/v2/licenses/verify", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${PAYHIP_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        product: PAYHIP_PRODUCT_KEY,
-        license: licenseKey,
-      }),
-    });
+    const license = licenses[licenseKey];
+    if (!license)
+      return res.status(404).json({ success: false, message: "License not found" });
 
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      console.error("❌ Payhip returned non-JSON (HTML) response:", text);
-      throw new Error("Payhip returned invalid JSON (check API URL or key)");
-    }
+    if (license.activated)
+      return res.json({ success: false, message: "License already activated" });
 
-    console.log("✅ Payhip response:", data);
+    license.activated = true;
+    license.activatedAt = new Date().toISOString();
+    saveLicenses();
 
-    if (data.valid) {
-      return res.json({
-        success: true,
-        message: "License validated successfully",
-        payhipResponse: data,
-      });
-    } else {
-      return res.json({
-        success: false,
-        message: "Invalid License",
-        payhipResponse: data,
-      });
-    }
+    res.json({ success: true, message: "License validated successfully" });
   } catch (err) {
-    console.error("❌ Payhip connection failed:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error during validation",
-      error: err.message,
-    });
+    console.error("❌ Validation error:", err);
+    res.status(500).json({ success: false, message: "Server error during validation" });
   }
 });
 
-// === Payhip Webhook Endpoint (Fixed) ===
-app.post("/payhip-webhook", express.urlencoded({ extended: true }), async (req, res) => {
+// === Payhip Webhook (Fixed Parsing + Logging) ===
+app.post("/payhip-webhook", (req, res) => {
   try {
-    // Handle both JSON and URL-encoded payloads
-    const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    console.log("📦 Received webhook from Payhip:", payload);
+    console.log("📦 Raw webhook body:", req.body);
 
-    const items = payload.items || [];
-    const item = items.length > 0 ? items[0] : null;
+    // Handle both JSON and URL-encoded formats
+    const payload =
+      typeof req.body === "string"
+        ? JSON.parse(req.body)
+        : req.body;
 
+    console.log("📦 Parsed webhook:", JSON.stringify(payload, null, 2));
+
+    const item = payload?.items?.[0];
     if (!item) {
-      console.log("❌ No item found in webhook payload");
+      console.log("❌ No items in webhook payload.");
       return res.status(400).json({ success: false, message: "No items in payload" });
     }
 
@@ -108,11 +87,11 @@ app.post("/payhip-webhook", express.urlencoded({ extended: true }), async (req, 
     const buyer_email = payload.email;
 
     if (!license_key || !product_id) {
-      console.log("❌ Missing license_key or product_id in webhook payload:", item);
+      console.log("❌ Missing license_key or product_id. Item data:", item);
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    // Save license locally
+    // Save license
     licenses[license_key] = {
       product_id,
       product_name,
@@ -120,27 +99,23 @@ app.post("/payhip-webhook", express.urlencoded({ extended: true }), async (req, 
       activated: false,
       createdAt: new Date().toISOString(),
     };
-
     saveLicenses();
-    console.log(`✅ Stored new license: ${license_key}`);
 
-    return res.json({ success: true });
-  } catch (error) {
-    console.error("❌ Error handling webhook:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.log(`✅ Stored license: ${license_key}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Webhook error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-
-// === Debug Endpoint (View All Licenses) ===
+// === Debug endpoint ===
 app.get("/licenses", (req, res) => {
-  res.json({
-    count: Object.keys(licenses).length,
-    licenses,
-  });
+  res.json({ count: Object.keys(licenses).length, licenses });
 });
 
-// === Start Server ===
-app.listen(PORT, () =>
-  console.log(`🚀 Mila License Server running on port ${PORT}`)
-);
+// === Start server ===
+app.listen(PORT, () => {
+  loadLicenses();
+  console.log(`🚀 Mila License Server is running on port ${PORT}`);
+});
