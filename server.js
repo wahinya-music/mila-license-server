@@ -1,21 +1,10 @@
-// === Dependency Check ===
-const requiredPackages = ["express", "dotenv", "axios", "body-parser", "node-fetch"];
-for (const pkg of requiredPackages) {
-  try {
-    require.resolve(pkg);
-  } catch (err) {
-    console.error(`❌ Missing dependency: "${pkg}". Please run: npm install ${pkg}`);
-    process.exit(1);
-  }
-}
-console.log("✅ All dependencies verified.\n");
-
 import express from "express";
 import fetch from "node-fetch";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import axios from "axios";
 
 dotenv.config();
 
@@ -41,14 +30,16 @@ if (fs.existsSync(LICENSE_FILE)) {
 // === Save helper ===
 function saveLicenses() {
   fs.writeFileSync(LICENSE_FILE, JSON.stringify(licenses, null, 2));
-  console.log("💾 Licenses saved locally");
 }
 
 // === Verify Payhip webhook signature ===
 function verifyPayhipSignature(body, signature) {
   const secret = PAYHIP_API_KEY; // Payhip API key used as signing secret
   const payload = JSON.stringify(body);
-  const hash = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  const hash = crypto
+    .createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex");
   return hash === signature;
 }
 
@@ -119,13 +110,5 @@ app.post("/admin/clear", (req, res) => {
   res.json({ success: true, message: "All licenses cleared" });
 });
 
-app.post("/admin/test-backup", (req, res) => {
-  if (req.query.key !== ADMIN_KEY)
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-
-  saveLicenses();
-  res.json({ success: true, message: "Local backup saved" });
-});
-
 // === Start server ===
-app.listen(PORT, () => console.log(`🚀 Mila License Server running cleanly on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Mila License Server running on port ${PORT}`));
