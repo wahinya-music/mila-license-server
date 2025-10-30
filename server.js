@@ -8,45 +8,36 @@ dotenv.config();
 const app = express();
 app.use(bodyParser.json());
 
-// Root test route
+// --- Test route ---
 app.get("/", (req, res) => {
-  res.send("✅ Mila License Server is running!");
+  res.send("✅ Mila License Server is running");
 });
 
-// Example license validation route
-app.post("/verify-license", async (req, res) => {
+// --- Example: License validation route ---
+app.post("/validate-license", async (req, res) => {
   try {
-    const { license_key } = req.body;
+    const { licenseKey } = req.body;
 
-    if (!license_key) {
-      return res.status(400).json({ error: "License key is required" });
+    if (!licenseKey) {
+      return res.status(400).json({ success: false, message: "License key required" });
     }
 
-    const response = await axios.get(
-      `https://payhip.com/api/v2/licenses/${license_key}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYHIP_API_KEY}`,
-        },
-      }
-    );
+    // Replace with your actual validation API if needed
+    const response = await axios.post("https://api.example.com/validate", { licenseKey });
 
-    res.json(response.data);
+    if (response.data.valid) {
+      return res.json({ success: true, message: "License is valid" });
+    } else {
+      return res.status(403).json({ success: false, message: "Invalid license" });
+    }
   } catch (error) {
-    console.error("License verification error:", error.message);
-    res
-      .status(500)
-      .json({ error: "Failed to verify license", details: error.message });
+    console.error("Validation error:", error.message);
+    res.status(500).json({ success: false, message: "Server error during validation" });
   }
 });
 
-// ✅ Prevent double start & handle Render dynamic port
-if (!module.parent) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-  });
-}
-
-export default app;
-// test auto-deploy
+// --- Start server ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
