@@ -18,44 +18,36 @@ app.post("/validate-license", async (req, res) => {
   console.log("🔑 Received license key:", licenseKey);
   console.log("🧠 Using product key:", PAYHIP_PRODUCT_KEY);
 
-  try {
-    const response = await axios.post(
-      "https://api.payhip.com/v2/licenses/verify",
-      {
-        product: PAYHIP_PRODUCT_KEY,
-        license: licenseKey,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PAYHIP_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+ try {
+  const response = await axios.get('https://api.payhip.com/v2/licenses/check', {
+    headers: {
+      Authorization: `Bearer ${PAYHIP_API_KEY}`,
+    },
+    params: {
+      product: PAYHIP_PRODUCT_KEY,
+      license: licenseKey,
+    },
+  });
 
-    console.log("✅ Payhip response:", response.data);
-
-    if (response.data.valid) {
-      return res.json({
-        valid: true,
-        message: "License validated successfully",
-      });
-    } else {
-      return res.json({
-        valid: false,
-        message: "Invalid License",
-      });
-    }
-  } catch (error) {
-    console.error("❌ Validation error:", error.response?.data || error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error during validation",
-      details: error.response?.data || error.message, // 👈 debug output
+  if (response.data.valid) {
+    return res.json({
+      valid: true,
+      message: 'License validated successfully',
+    });
+  } else {
+    return res.json({
+      valid: false,
+      message: 'Invalid License',
     });
   }
-});
+} catch (error) {
+  console.error('Validation error:', error.response?.data || error.message);
+  return res.status(500).json({
+    success: false,
+    message: 'Server error during validation',
+  });
+}
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
