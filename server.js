@@ -1,127 +1,72 @@
-// === Dependency Check ===
-const requiredPackages = ["express", "dotenv", "axios", "body-parser", "node-fetch"];
-for (const pkg of requiredPackages) {
-  try {
-    require.resolve(pkg);
-  } catch (err) {
-    console.error(`❌ Missing dependency: "${pkg}". Please run: npm install ${pkg}`);
-    process.exit(1);
-  }
-}
-console.log("✅ All dependencies verified.\n");
-
 import express from "express";
-import fetch from "node-fetch";
-import fs from "fs";
-import path from "path";
+import bodyParser from "body-parser";
 import dotenv from "dotenv";
+import crypto from "crypto";
+import axios from "axios";
 
 dotenv.config();
 
 const app = express();
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
 const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
-const PAYHIP_PRODUCT_ID = process.env.PAYHIP_PRODUCT_ID;
-const ADMIN_KEY = "YOUR_SECRET_ADMIN_KEY"; // your actual admin key
-const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET; // optional secret to secure webhook URL
+const PAYHIP_PRODUCT_KEY = process.env.PAYHIP_PRODUCT_KEY;
+const ADMIN_KEY = process.env.ADMIN_KEY || "YOUR_SECRET_ADMIN_KEY";
+const GOOGLE_DRIVE_ENABLED = process.env.GOOGLE_DRIVE_ENABLED === "true";
 
-const LICENSE_FILE = path.resolve("licenses.json");
+app.use(bodyParser.json());
 
-// === Load or initialize local license store ===
-let licenses = {};
-if (fs.existsSync(LICENSE_FILE)) {
-  licenses = JSON.parse(fs.readFileSync(LICENSE_FILE, "utf8"));
-} else {
-  licenses = { count: 0, licenses: {} };
-  fs.writeFileSync(LICENSE_FILE, JSON.stringify(licenses, null, 2));
-}
+// ✅ Root endpoint
+app.get("/", (req, res) => {
+  res.send("✅ Mila License Server is running cleanly — no Google Drive active.");
+});
 
-// === Save helper ===
-function saveLicenses() {
-  fs.writeFileSync(LICENSE_FILE, JSON.stringify(licenses, null, 2));
-  console.log("💾 Licenses saved locally.");
-}
+// ✅ Webhook endpoint for Payhip
+app.post("/webhook", async (req, res) => {
+  try {
+    const payload = JSON.stringify(req.body);
+    const signature = req.headers["x-payhip-signature"];
 
-// === Payhip Webhook ===
-app.post("/webhook/payhip", async (req, res) => {
-  console.log("📦 Received webhook from Payhip:", req.body);
+    // Validate webhook signature
+    const expectedSig = crypto
+      .createHmac("sha256", PAYHIP_API_KEY)
+      .update(payload)
+      .digest("hex");
 
-  // Optional webhook secret check (recommended)
-  if (PAYHIP_WEBHOOK_SECRET) {
-    if (req.query.secret !== PAYHIP_WEBHOOK_SECRET) {
-      console.warn("🚫 Unauthorized webhook attempt — invalid secret");
-      return res.status(403).json({ success: false, message: "Unauthorized" });
+    if (signature !== expectedSig) {
+      console.warn("❌ Invalid signature — webhook ignored.");
+      return res.status(400).json({ success: false, message: "Invalid signature" });
     }
+
+    console.log("📦 Received webhook from Payhip:", req.body);
+
+    // Handle license logic
+    const licenseData = req.body.items?.[0];
+    if (licenseData) {
+      console.log("🎟️ License Key:", licenseData.license_key);
+      console.log("💾 Product ID:", licenseData.product_id);
+    }
+
+    // Skip Google Drive backup (disabled)
+    if (!GOOGLE_DRIVE_ENABLED) {
+      console.log("🟡 Google Drive backup skipped (disabled).");
+    }
+
+    res.json({ success: true, message: "Webhook processed cleanly" });
+  } catch (err) {
+    console.error("❌ Webhook error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
+});
 
-  console.log("⚠️ Skipping Payhip signature verification (not supported externally).");
-
-  const item = req.body.items?.[0];
-  if (!item || !item.license_key || !item.product_id) {
-    console.error("❌ Missing license_key or product_id in webhook payload");
-    return res.status(400).json({ success: false });
+// ✅ Admin test route (secured)
+app.get("/admin/test", (req, res) => {
+  const key = req.query.key;
+  if (key !== ADMIN_KEY) {
+    return res.status(403).json({ success: false, message: "Invalid admin key" });
   }
-
-  const licenseKey = item.license_key;
-
-  licenses.licenses[licenseKey] = {
-    product_id: item.product_id,
-    product_name: item.product_name,
-    buyer_email: req.body.email,
-    activated: false,
-    createdAt: new Date().toISOString(),
-  };
-  licenses.count = Object.keys(licenses.licenses).length;
-
-  saveLicenses();
-
-  console.log(`✅ License stored for ${licenseKey}`);
-  res.json({ success: true });
+  res.json({ success: true, message: "Admin test route working!" });
 });
 
-// === License validation endpoint ===
-app.post("/validate_license", (req, res) => {
-  const { Licensekey } = req.body;
-  if (!Licensekey)
-    return res.status(400).json({ success: false, message: "Missing Licensekey" });
-
-  const lic = licenses.licenses[Licensekey];
-  if (lic) {
-    return res.json({
-      success: true,
-      message: "License validated successfully",
-      license: lic,
-    });
-  }
-
-  res.json({ success: false, message: "Invalid license" });
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
-
-// === Admin routes (protected) ===
-app.get("/admin/licenses", (req, res) => {
-  if (req.query.key !== ADMIN_KEY)
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-  res.json(licenses);
-});
-
-app.post("/admin/clear", (req, res) => {
-  if (req.query.key !== ADMIN_KEY)
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-
-  licenses = { count: 0, licenses: {} };
-  saveLicenses();
-  res.json({ success: true, message: "All licenses cleared" });
-});
-
-app.post("/admin/test-backup", (req, res) => {
-  if (req.query.key !== ADMIN_KEY)
-    return res.status(403).json({ success: false, message: "Unauthorized" });
-
-  saveLicenses();
-  res.json({ success: true, message: "Manual local save triggered" });
-});
-
-// === Start server ===
-app.listen(PORT, () => console.log(`🚀 Mila License Server running on port ${PORT}`));
