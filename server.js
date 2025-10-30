@@ -1,53 +1,51 @@
 import express from "express";
+import dotenv from "dotenv";
+import axios from "axios";
 import bodyParser from "body-parser";
-import fetch from "node-fetch";
+
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
 
-// Read Payhip API key from environment
-const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
+// Root test route
+app.get("/", (req, res) => {
+  res.send("✅ Mila License Server is running!");
+});
 
-// License verification endpoint
-app.post("/verify", async (req, res) => {
-  const { licenseKey } = req.body;
-
+// Example license validation route
+app.post("/verify-license", async (req, res) => {
   try {
-    const response = await fetch("https://payhip.com/api/v1/licenses/verify", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.PAYHIP_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        product_id: "YOUR_PRODUCT_ID", // replace this with your actual Payhip product ID
-        license: licenseKey
-      })
-    });
+    const { license_key } = req.body;
 
-    const data = await response.json();
-    console.log("Verification response:", data);
-
-    if (data.success) {
-      res.json({ status: "success", message: "License valid" });
-    } else {
-      res.json({ status: "error", message: "Invalid license" });
+    if (!license_key) {
+      return res.status(400).json({ error: "License key is required" });
     }
-  } catch (err) {
-    console.error("Verification error:", err);
-    res.json({ status: "error", message: "Server error verifying license" });
+
+    const response = await axios.get(
+      `https://payhip.com/api/v2/licenses/${license_key}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYHIP_API_KEY}`,
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("License verification error:", error.message);
+    res
+      .status(500)
+      .json({ error: "Failed to verify license", details: error.message });
   }
 });
 
-// Test route
-app.get("/", (req, res) => {
-  res.send("Mila License Server is running ✅");
-});
+// ✅ Prevent double start & handle Render dynamic port
+if (!module.parent) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on port ${PORT}`);
+  });
+}
 
-// Start server
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
+export default app;
