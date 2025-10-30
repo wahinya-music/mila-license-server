@@ -1,3 +1,15 @@
+// === Dependency Check ===
+const requiredPackages = ["express", "dotenv", "axios", "body-parser", "googleapis", "node-fetch"];
+for (const pkg of requiredPackages) {
+  try {
+    require.resolve(pkg);
+  } catch (err) {
+    console.error(`❌ Missing dependency: "${pkg}". Please run: npm install ${pkg}`);
+    process.exit(1);
+  }
+}
+console.log("✅ All dependencies verified.\n");
+
 import express from "express";
 import fetch from "node-fetch";
 import crypto from "crypto";
