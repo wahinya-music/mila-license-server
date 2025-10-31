@@ -15,6 +15,7 @@ const PORT = process.env.PORT || 10000;
 const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
 const PAYHIP_PRODUCT_KEY = process.env.PAYHIP_PRODUCT_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY || "YOUR_SECRET_ADMIN_KEY";
+const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET || "mywebhook2025secret";
 
 // === Google Drive Setup ===
 let driveActive = false;
@@ -77,8 +78,41 @@ app.get("/admin/licenses", async (req, res) => {
   }
 });
 
-// === Example POST route for license verification (keep existing logic if present) ===
-// app.post("/verify", async (req, res) => { ... your existing verify code ... });
+// === Webhook: Payhip purchase ===
+app.post("/webhook/payhip", async (req, res) => {
+  try {
+    // Verify webhook secret
+    const secret = req.query.secret;
+    if (secret !== PAYHIP_WEBHOOK_SECRET) {
+      console.log("❌ Invalid webhook secret");
+      return res.status(403).json({ success: false, message: "Invalid webhook secret" });
+    }
+
+    // Extract payload
+    const payload = req.body;
+    console.log("✅ Payhip webhook received:", JSON.stringify(payload, null, 2));
+
+    // Generate new license
+    const licenses = await loadLicenses();
+    const license = {
+      id: Date.now().toString(),
+      buyer_email: payload?.email || "unknown",
+      product_name: payload?.product_name || "unknown",
+      license_key: Math.random().toString(36).substring(2, 10).toUpperCase(),
+      created_at: new Date().toISOString(),
+    };
+
+    licenses.push(license);
+    await saveLicenses(licenses);
+
+    console.log("🎉 License created for", license.buyer_email);
+
+    return res.json({ success: true, license });
+  } catch (error) {
+    console.error("❌ Webhook error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // === Start server ===
 app.listen(PORT, () => {
