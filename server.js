@@ -116,13 +116,14 @@ app.post("/verify", async (req, res) => {
     const filePath = path.join(process.cwd(), "tamaduni_player_activation.json");
     fs.writeFileSync(filePath, JSON.stringify(license, null, 2));
 
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Disposition", "attachment; filename=tamaduni_player_activation.json");
-    res.sendFile(filePath, (err) => {
-      if (err) console.error("❌ Error sending license file:", err);
-      else {
-        console.log(`📄 License file sent: ${filePath}`);
-        fs.unlinkSync(filePath); // cleanup after sending
+    // === Send file as downloadable attachment ===
+    res.download(filePath, "tamaduni_player_activation.json", (err) => {
+      if (err) {
+        console.error("❌ Error sending license file:", err);
+      } else {
+        console.log(`📄 License file sent successfully: ${filePath}`);
+        // You can uncomment the next line to auto-delete after sending:
+        // fs.unlinkSync(filePath);
       }
     });
 
