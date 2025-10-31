@@ -10,8 +10,6 @@ const app = express();
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 10000;
-const PAYHIP_API_KEY = process.env.PAYHIP_API_KEY;
-const PAYHIP_PRODUCT_KEY = process.env.PAYHIP_PRODUCT_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY || "YOUR_SECRET_ADMIN_KEY";
 const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET || "mywebhook2025secret";
 
@@ -20,7 +18,13 @@ async function loadLicenses() {
   const localPath = path.join(process.cwd(), "licenses.json");
   if (fs.existsSync(localPath)) {
     const data = fs.readFileSync(localPath, "utf-8");
-    return JSON.parse(data || "[]");
+    try {
+      return JSON.parse(data || "[]");
+    } catch (err) {
+      console.error("⚠️ Corrupted licenses.json — resetting file.");
+      fs.writeFileSync(localPath, "[]");
+      return [];
+    }
   }
   return [];
 }
@@ -45,6 +49,7 @@ app.get("/admin/licenses", async (req, res) => {
 
   try {
     const licenses = await loadLicenses();
+    console.log(`👀 Admin fetched ${licenses.length} license(s).`);
     res.json(licenses);
   } catch (error) {
     console.error("❌ Error loading licenses:", error);
@@ -74,6 +79,13 @@ app.post("/webhook/payhip", async (req, res) => {
     }
 
     const licenses = await loadLicenses();
+    const alreadyExists = licenses.some(l => l.license_key === payhipLicenseKey);
+
+    if (alreadyExists) {
+      console.log(`⚠️ License key ${payhipLicenseKey} already exists — skipping duplicate.`);
+      return res.json({ success: true, message: "License already exists" });
+    }
+
     const newLicense = {
       id: Date.now().toString(),
       buyer_email: payload?.email || "unknown",
@@ -98,7 +110,9 @@ app.post("/webhook/payhip", async (req, res) => {
 app.post("/verify", async (req, res) => {
   try {
     const { license_key } = req.body;
+
     if (!license_key) {
+      console.log("⚠️ Missing license_key in /verify request");
       return res.status(400).json({ success: false, message: "License key is required" });
     }
 
@@ -107,10 +121,11 @@ app.post("/verify", async (req, res) => {
 
     if (!license) {
       console.log("❌ Invalid license key:", license_key);
+      console.log("🔍 Currently stored keys:", licenses.map(l => l.license_key));
       return res.status(404).json({ success: false, message: "Invalid license key" });
     }
 
-    console.log(`✅ Valid license verified for ${license.buyer_email}`);
+    console.log(`✅ Valid license verified for ${license.buyer_email} — key: ${license.license_key}`);
 
     // === Create tamaduni_player_activation.json ===
     const filePath = path.join(process.cwd(), "tamaduni_player_activation.json");
@@ -122,8 +137,7 @@ app.post("/verify", async (req, res) => {
         console.error("❌ Error sending license file:", err);
       } else {
         console.log(`📄 License file sent successfully: ${filePath}`);
-        // You can uncomment the next line to auto-delete after sending:
-        // fs.unlinkSync(filePath);
+        fs.unlinkSync(filePath); // delete after sending
       }
     });
 
