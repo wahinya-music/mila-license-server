@@ -90,24 +90,25 @@ app.post("/webhook/payhip", async (req, res) => {
 
     // Extract payload
     const payload = req.body;
-    console.log("✅ Payhip webhook received:", JSON.stringify(payload, null, 2));
+    console.log("📦 Payhip webhook received:", JSON.stringify(payload, null, 2));
 
-    // Generate new license
-    const licenses = await loadLicenses();
-    const license = {
+    // Extract product + license key from Payhip
+    const item = payload?.items?.[0];
+    const newLicense = {
       id: Date.now().toString(),
       buyer_email: payload?.email || "unknown",
-      product_name: payload?.product_name || "unknown",
-      license_key: Math.random().toString(36).substring(2, 10).toUpperCase(),
+      product_name: item?.product_name || "unknown",
+      license_key: item?.license_key || "N/A",
       created_at: new Date().toISOString(),
     };
 
-    licenses.push(license);
+    // Save to licenses.json
+    const licenses = await loadLicenses();
+    licenses.push(newLicense);
     await saveLicenses(licenses);
 
-    console.log("🎉 License created for", license.buyer_email);
-
-    return res.json({ success: true, license });
+    console.log(`🎉 License saved for ${newLicense.buyer_email} (${newLicense.product_name})`);
+    return res.json({ success: true, license: newLicense });
   } catch (error) {
     console.error("❌ Webhook error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
