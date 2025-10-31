@@ -3,7 +3,6 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 import bodyParser from "body-parser";
-import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -37,11 +36,12 @@ app.get("/", (req, res) => {
   res.send("✅ Mila License Server is running cleanly — no Google Drive active.");
 });
 
-// === GET all licenses (admin only) ===
+// === Admin: Get all licenses ===
 app.get("/admin/licenses", async (req, res) => {
   const key = req.query.key;
-  if (key !== ADMIN_KEY)
+  if (key !== ADMIN_KEY) {
     return res.status(403).json({ error: "Unauthorized admin key" });
+  }
 
   try {
     const licenses = await loadLicenses();
@@ -58,64 +58,61 @@ app.post("/webhook/payhip", async (req, res) => {
     const secret = req.query.secret;
     if (secret !== PAYHIP_WEBHOOK_SECRET) {
       console.log("❌ Invalid webhook secret");
-      return res
-        .status(403)
-        .json({ success: false, message: "Invalid webhook secret" });
+      return res.status(403).json({ success: false, message: "Invalid webhook secret" });
     }
 
     const payload = req.body;
-    console.log("✅ Payhip webhook received:", JSON.stringify(payload, null, 2));
+    console.log("📦 Payhip webhook received:", JSON.stringify(payload, null, 2));
+
+    const item = payload?.items?.[0];
+    const payhipLicenseKey = item?.license_key || null;
+    const productName = item?.product_name || "unknown";
+
+    if (!payhipLicenseKey) {
+      console.log("⚠️ No license key found in Payhip payload.");
+      return res.status(400).json({ success: false, message: "Missing license key" });
+    }
 
     const licenses = await loadLicenses();
-
-    // ✅ Extract real license key if provided by Payhip
-    const product = payload.items?.[0];
-    const licenseKey =
-      product?.license_key ||
-      Math.random().toString(36).substring(2, 10).toUpperCase();
-
-    const license = {
+    const newLicense = {
       id: Date.now().toString(),
       buyer_email: payload?.email || "unknown",
-      product_name: product?.product_name || "unknown",
-      license_key: licenseKey,
+      product_name: productName,
+      license_key: payhipLicenseKey,
       created_at: new Date().toISOString(),
     };
 
-    licenses.push(license);
+    licenses.push(newLicense);
     await saveLicenses(licenses);
 
-    console.log("🎉 License created for", license.buyer_email);
-    return res.json({ success: true, license });
+    console.log(`✅ Saved Payhip license ${payhipLicenseKey} for ${newLicense.buyer_email}`);
+    return res.json({ success: true, license: newLicense });
+
   } catch (error) {
     console.error("❌ Webhook error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// === Verify Route: Check if license is valid and return JSON file ===
+// === Verify: Check if license is valid and return JSON ===
 app.post("/verify", async (req, res) => {
   try {
     const { license_key } = req.body;
     if (!license_key) {
-      return res
-        .status(400)
-        .json({ success: false, message: "License key is required" });
+      return res.status(400).json({ success: false, message: "License key is required" });
     }
 
     const licenses = await loadLicenses();
-    const license = licenses.find((l) => l.license_key === license_key);
+    const license = licenses.find(l => l.license_key === license_key);
 
     if (!license) {
       console.log("❌ Invalid license key:", license_key);
-      return res
-        .status(404)
-        .json({ success: false, message: "Invalid license key" });
+      return res.status(404).json({ success: false, message: "Invalid license key" });
     }
 
     console.log(`✅ Valid license verified for ${license.buyer_email}`);
 
-    // === Create tamaduni_player_activation.json
+    // === Create tamaduni_player_activation.json ===
     const filePath = path.join(process.cwd(), "tamaduni_player_activation.json");
     fs.writeFileSync(filePath, JSON.stringify(license, null, 2));
 
@@ -125,10 +122,10 @@ app.post("/verify", async (req, res) => {
       if (err) console.error("❌ Error sending license file:", err);
       else {
         console.log(`📄 License file sent: ${filePath}`);
-        // Clean up file after sending
-        fs.unlinkSync(filePath);
+        fs.unlinkSync(filePath); // cleanup after sending
       }
     });
+
   } catch (error) {
     console.error("❌ Verify route error:", error);
     res.status(500).json({ success: false, message: "Server error" });
