@@ -1,10 +1,12 @@
 {
   "name": "mila-license-server",
   "version": "1.0.0",
+  "description": "License verification server for Mila Afrika apps using Payhip integration.",
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -13,5 +15,12 @@
     "express": "^4.21.2",
     "googleapis": "^164.1.0",
     "node-fetch": "^3.3.2"
-  }
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "license": "MIT"
 }
