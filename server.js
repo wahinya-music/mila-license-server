@@ -35,6 +35,37 @@ async function saveLicenses(licenses) {
   fs.writeFileSync(localPath, JSON.stringify(licenses, null, 2));
 }
 
+// === Helper: Append to logs.json ===
+async function appendLog(entry) {
+  const logPath = path.join(process.cwd(), "logs.json");
+  let logs = [];
+  if (fs.existsSync(logPath)) {
+    try {
+      logs = JSON.parse(fs.readFileSync(logPath, "utf-8") || "[]");
+    } catch {
+      logs = [];
+    }
+  }
+  logs.push(entry);
+  fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
+}
+
+// === Helper: Load logs ===
+async function loadLogs() {
+  const logPath = path.join(process.cwd(), "logs.json");
+  if (fs.existsSync(logPath)) {
+    const data = fs.readFileSync(logPath, "utf-8");
+    try {
+      return JSON.parse(data || "[]");
+    } catch (err) {
+      console.error("⚠️ Corrupted logs.json — resetting file.");
+      fs.writeFileSync(logPath, "[]");
+      return [];
+    }
+  }
+  return [];
+}
+
 // === Root route ===
 app.get("/", (req, res) => {
   res.send("✅ Mila License Server is running cleanly — no Google Drive active.");
@@ -54,6 +85,23 @@ app.get("/admin/licenses", async (req, res) => {
   } catch (error) {
     console.error("❌ Error loading licenses:", error);
     res.status(500).json({ error: "Failed to load licenses" });
+  }
+});
+
+// === 🧾 Admin: Get activation logs ===
+app.get("/admin/logs", async (req, res) => {
+  const key = req.query.key;
+  if (key !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Unauthorized admin key" });
+  }
+
+  try {
+    const logs = await loadLogs();
+    console.log(`📜 Admin fetched ${logs.length} activation log(s).`);
+    res.json(logs);
+  } catch (error) {
+    console.error("❌ Error loading logs:", error);
+    res.status(500).json({ error: "Failed to load logs" });
   }
 });
 
@@ -109,10 +157,18 @@ app.post("/webhook/payhip", async (req, res) => {
 // === Verify: Check if license is valid and return JSON ===
 app.post("/verify", async (req, res) => {
   try {
-    const { license_key } = req.body;
+    const { license_key, product } = req.body;
+    const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+    console.log("==============================================");
+    console.log("🔍 License verification attempt received");
+    console.log("📦 Product:", product || "Unknown Product");
+    console.log("🔑 License Key:", license_key || "None Provided");
+    console.log("🌍 Request IP:", userIp);
+    console.log("==============================================");
 
     if (!license_key) {
-      console.log("⚠️ Missing license_key in /verify request");
+      console.log("⚠️ No license key provided in request.");
       return res.status(400).json({ success: false, message: "License key is required" });
     }
 
@@ -121,24 +177,39 @@ app.post("/verify", async (req, res) => {
 
     if (!license) {
       console.log("❌ Invalid license key:", license_key);
-      console.log("🔍 Currently stored keys:", licenses.map(l => l.license_key));
+      console.log("==============================================\n");
       return res.status(404).json({ success: false, message: "Invalid license key" });
     }
 
-    console.log(`✅ Valid license verified for ${license.buyer_email} — key: ${license.license_key}`);
+    console.log(`✅ Valid license verified for ${license.buyer_email}`);
+    console.log(`🕒 Activation time: ${new Date().toISOString()}`);
 
-    // === Create tamaduni_player_activation.json ===
+    await appendLog({
+      license_key,
+      product: product || "Unknown Product",
+      buyer_email: license.buyer_email,
+      ip: userIp,
+      activated_at: new Date().toISOString(),
+    });
+
+    // === Create activation file ===
     const filePath = path.join(process.cwd(), "tamaduni_player_activation.json");
     fs.writeFileSync(filePath, JSON.stringify(license, null, 2));
 
-    // === Send file as downloadable attachment ===
+    // === Send activation file ===
     res.download(filePath, "tamaduni_player_activation.json", (err) => {
       if (err) {
         console.error("❌ Error sending license file:", err);
       } else {
         console.log(`📄 License file sent successfully: ${filePath}`);
-        fs.unlinkSync(filePath); // delete after sending
       }
+
+      // Clean up temp file after sending
+      setTimeout(() => {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }, 3000);
+
+      console.log("==============================================\n");
     });
 
   } catch (error) {
