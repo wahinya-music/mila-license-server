@@ -1,21 +1,23 @@
 {
   "name": "mila-license-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Secure license verification server for Mila Afrika apps using Payhip integration, AES encryption, and GitHub sync.",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "npm install simple-git"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "body-parser": "^1.20.2",
+    "crypto-js": "^4.2.0",
     "dotenv": "^16.4.1",
     "express": "^4.21.2",
-    "simple-git": "^3.21.0",
     "node-cron": "^3.0.3",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "simple-git": "^3.30.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
@@ -28,7 +30,8 @@
     "mila-afrika",
     "payhip",
     "github-sync",
-    "aes-encryption"
+    "aes-encryption",
+    "render-deploy"
   ],
   "repository": {
     "type": "git",
