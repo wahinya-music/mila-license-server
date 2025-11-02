@@ -31,7 +31,7 @@ const PORT = process.env.PORT || 10000;
 
 // ✅ Build authenticated URL safely (supports token already embedded)
 let AUTH_URL = GITHUB_REPO;
-if (!GITHUB_REPO.includes(GITHUB_TOKEN) && GITHUB_TOKEN) {
+if (GITHUB_TOKEN && !GITHUB_REPO.includes(GITHUB_TOKEN)) {
   AUTH_URL = GITHUB_REPO.replace('https://', `https://x-access-token:${GITHUB_TOKEN}@`);
 }
 
@@ -72,6 +72,7 @@ async function ensureGitRepo() {
     await git.clone(AUTH_URL, '.');
   } else {
     console.log('🔁 Git repo found — skipping clone.');
+    await git.raw(['remote', 'set-url', 'origin', AUTH_URL]); // ✅ always enforce correct remote
   }
 }
 
@@ -93,11 +94,13 @@ async function syncFromGitHub() {
     console.log('✅ Sync complete.');
   } catch (err) {
     console.error('❌ GitHub sync failed:', err.message);
+    console.error('🔍 Check that your GITHUB_TOKEN has "repo" scope and is correct.');
   }
 }
 
 async function pushToGitHub(retries = 3, delay = 2000) {
   try {
+    await git.raw(['remote', 'set-url', 'origin', AUTH_URL]); // ✅ force correct URL on push
     console.log('🔒 Encrypting and pushing license data...');
 
     const files = fs.readdirSync(LICENSES_DIR);
@@ -110,7 +113,7 @@ async function pushToGitHub(retries = 3, delay = 2000) {
 
     await git.add('./*');
     await git.commit(`🔐 License update @ ${new Date().toISOString()}`);
-    await git.push(AUTH_URL, 'main');
+    await git.push('origin', 'main');
 
     console.log('✅ Licenses pushed successfully.');
 
@@ -128,6 +131,7 @@ async function pushToGitHub(retries = 3, delay = 2000) {
       return pushToGitHub(retries - 1, delay * 2); // exponential backoff
     } else {
       console.error('❌ GitHub push failed permanently:', err.message);
+      console.error('🔍 Check token permissions or repo visibility.');
     }
   }
 }
@@ -214,6 +218,6 @@ syncFromGitHub().then(() => {
   app.listen(PORT, () => {
     console.log(`✅ Mila License Server running on port ${PORT}`);
     console.log(`🔑 Using encryption key: ${PASSPHRASE}`);
-    console.log(`🗄 Repo: ${GITHUB_REPO.replace(GITHUB_TOKEN, '***TOKEN***')}`);
+    console.log(`🗄 Repo: ${GITHUB_REPO}`);
   });
 });
