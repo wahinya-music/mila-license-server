@@ -12,7 +12,7 @@ import { execSync } from "child_process";
 import dotenv from "dotenv";
 
 // Dropbox sync helper
-import { uploadLicensesToDropbox, downloadLicensesFromDropbox } from "./dropbox.js";
+import { uploadLicensesToDropbox, downloadLicensesFromDropbox } from "./dropboxSync.js";
 
 dotenv.config();
 
