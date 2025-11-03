@@ -25,7 +25,7 @@ const dbx = new Dropbox({ accessToken: DROPBOX_ACCESS_TOKEN, fetch });
 // =============================================
 // Upload all local license JSON files → Dropbox
 // =============================================
-export async function uploadLicenses() {
+export async function uploadLicensesToDropbox() {
   try {
     if (!fs.existsSync(LOCAL_LICENSES_DIR)) {
       console.warn("⚠️ No local licenses folder found — skipping Dropbox upload.");
@@ -54,7 +54,7 @@ export async function uploadLicenses() {
 // =============================================
 // Download all license JSON files ← Dropbox
 // =============================================
-export async function downloadLicenses() {
+export async function downloadLicensesFromDropbox() {
   try {
     // Ensure local folder exists
     if (!fs.existsSync(LOCAL_LICENSES_DIR)) fs.mkdirSync(LOCAL_LICENSES_DIR, { recursive: true });
