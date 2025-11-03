@@ -1,7 +1,7 @@
 {
   "name": "mila-license-server",
-  "version": "1.4.0",
-  "description": "Secure license verification server for Mila Afrika apps using Payhip integration, AES encryption, and Dropbox cloud sync.",
+  "version": "2.0.0",
+  "description": "Lightweight license verification server for Mila Afrika apps using Payhip webhooks and Render hosting.",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -9,15 +9,9 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "axios": "^1.7.2",
-    "body-parser": "^1.20.2",
-    "crypto-js": "^4.2.0",
-    "dotenv": "^16.4.1",
-    "dropbox": "^10.34.0",
-    "express": "^4.21.2",
-    "node-cron": "^3.0.3",
-    "node-fetch": "^3.3.2",
-    "simple-git": "^3.30.0"
+    "body-parser": "^1.20.3",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
@@ -29,14 +23,8 @@
     "license-server",
     "mila-afrika",
     "payhip",
-    "dropbox-sync",
-    "aes-encryption",
-    "render-deploy"
+    "render"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/wahinya-music/mila-license-server.git"
-  },
   "author": "Mila Afrika",
   "license": "MIT"
 }
