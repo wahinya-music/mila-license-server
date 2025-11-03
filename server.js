@@ -34,8 +34,8 @@ function generateLicenseKey() {
 
 // === Payhip Webhook Endpoint ===
 app.post("/webhook/payhip", (req, res) => {
-  const signature = req.headers["x-payhip-signature"];
-  if (signature !== PAYHIP_WEBHOOK_SECRET) {
+  const secret = req.query.secret;
+  if (secret !== PAYHIP_WEBHOOK_SECRET) {
     return res.status(403).json({ error: "Invalid webhook secret" });
   }
 
@@ -46,14 +46,11 @@ app.post("/webhook/payhip", (req, res) => {
   }
 
   let licenses = loadLicenses();
-
-  // Check if user already has a license
   let existing = licenses.find((l) => l.email === email);
   if (existing) {
     return res.status(200).json({ message: "License already issued", license: existing });
   }
 
-  // Generate and save new license
   const newLicense = {
     email,
     product,
