@@ -1,110 +1,85 @@
-// =============================================
-// MILA AFRIKA LICENSE SERVER — Simplified Version
-// Payhip → Render → Local JSON
-// =============================================
-
 import express from "express";
-import fs from "fs";
-import path from "path";
 import bodyParser from "body-parser";
+import fs from "fs";
 import dotenv from "dotenv";
+import crypto from "crypto";
 
 dotenv.config();
-
 const app = express();
-app.use(bodyParser.json({ limit: "1mb" }));
+app.use(bodyParser.json());
 
-// ================= Configuration =================
-const LICENSES_FILE = path.resolve("./licenses.json");
-const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET || "mywebhook2025secret";
-const PORT = parseInt(process.env.PORT || "10000", 10);
+const PORT = process.env.PORT || 10000;
+const ADMIN_KEY = process.env.ADMIN_KEY;
+const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET;
 
-// ================= License Helpers =================
+// === Path for local license file ===
+const LICENSES_FILE = "./licenses.json";
+
+// === Load or initialize licenses.json ===
 function loadLicenses() {
-  if (!fs.existsSync(LICENSES_FILE)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(LICENSES_FILE, "utf8"));
-  } catch (err) {
-    console.warn("⚠️ Failed to parse licenses.json:", err.message);
-    return [];
+  if (!fs.existsSync(LICENSES_FILE)) {
+    fs.writeFileSync(LICENSES_FILE, JSON.stringify([], null, 2));
   }
+  return JSON.parse(fs.readFileSync(LICENSES_FILE));
 }
 
-function saveLicenses(licenses) {
-  fs.writeFileSync(LICENSES_FILE, JSON.stringify(licenses, null, 2), "utf8");
+function saveLicenses(data) {
+  fs.writeFileSync(LICENSES_FILE, JSON.stringify(data, null, 2));
 }
 
-// ================= API Routes =================
+// === Helper: Generate unique license key ===
+function generateLicenseKey() {
+  return crypto.randomBytes(16).toString("hex").toUpperCase();
+}
 
-// Health check
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "✅ Mila License Server is running",
-  });
-});
-
-// License verification endpoint
-app.post("/verify", (req, res) => {
-  try {
-    const { license_key } = req.body || {};
-    if (!license_key) return res.status(400).json({ success: false, message: "Missing license_key" });
-
-    const licenses = loadLicenses();
-    const found = licenses.find((l) => l.license_key === license_key);
-
-    if (found) {
-      return res.json({ success: true, license: found });
-    } else {
-      return res.status(404).json({ success: false, message: "Invalid license key" });
-    }
-  } catch (err) {
-    console.error("❌ /verify error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// Payhip webhook handler
+// === Payhip Webhook Endpoint ===
 app.post("/webhook/payhip", (req, res) => {
-  try {
-    const providedSecret = req.query.secret;
-    if (providedSecret !== PAYHIP_WEBHOOK_SECRET) {
-      console.warn("❌ Invalid webhook secret:", providedSecret);
-      return res.status(403).send("Forbidden");
-    }
-
-    res.status(200).send("OK"); // Acknowledge immediately
-
-    const body = req.body;
-    const license_key = body.license_key || body.licenseKey;
-    const buyer_email = body.buyer_email || body.email;
-    const product_name = body.product_name || body.product;
-
-    if (!license_key || !product_name) {
-      console.warn("⚠️ Missing license key or product name");
-      return;
-    }
-
-    const licenses = loadLicenses();
-    if (!licenses.some((l) => l.license_key === license_key)) {
-      licenses.push({
-        license_key,
-        buyer_email,
-        product_name,
-        activated: false,
-        issued_at: new Date().toISOString(),
-      });
-      saveLicenses(licenses);
-      console.log(`✅ New license saved: ${license_key} for ${product_name}`);
-    } else {
-      console.log("⚠️ Duplicate license, skipping:", license_key);
-    }
-  } catch (err) {
-    console.error("❌ /webhook/payhip error:", err);
+  const signature = req.headers["x-payhip-signature"];
+  if (signature !== PAYHIP_WEBHOOK_SECRET) {
+    return res.status(403).json({ error: "Invalid webhook secret" });
   }
+
+  const { email, product, order_id } = req.body;
+
+  if (!email || !order_id) {
+    return res.status(400).json({ error: "Missing order data" });
+  }
+
+  let licenses = loadLicenses();
+
+  // Check if user already has a license
+  let existing = licenses.find((l) => l.email === email);
+  if (existing) {
+    return res.status(200).json({ message: "License already issued", license: existing });
+  }
+
+  // Generate and save new license
+  const newLicense = {
+    email,
+    product,
+    order_id,
+    license_key: generateLicenseKey(),
+    issued_at: new Date().toISOString(),
+  };
+
+  licenses.push(newLicense);
+  saveLicenses(licenses);
+
+  console.log(`✅ License issued for ${email}: ${newLicense.license_key}`);
+  res.status(200).json({ success: true, license: newLicense });
 });
 
-// ================= Startup =================
+// === Admin Route: View all licenses ===
+app.get("/admin/licenses", (req, res) => {
+  const key = req.query.key;
+  if (key !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  const licenses = loadLicenses();
+  res.json(licenses);
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Mila License Server running on port ${PORT}`);
 });
