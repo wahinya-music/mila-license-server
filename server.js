@@ -1,5 +1,5 @@
 // =============================================
-// MILA AFRIKA LICENSE SERVER (Encrypted GitHub Sync + SSH/Token auth + Retry)
+// MILA AFRIKA LICENSE SERVER (GitHub + Dropbox Hybrid Sync)
 // =============================================
 import express from "express";
 import fs from "fs";
@@ -11,6 +11,9 @@ import bodyParser from "body-parser";
 import { execSync } from "child_process";
 import dotenv from "dotenv";
 
+// Dropbox sync helper
+import { uploadLicensesToDropbox, downloadLicensesFromDropbox } from "./dropbox.js";
+
 dotenv.config();
 
 const app = express();
@@ -21,40 +24,25 @@ const LICENSES_DIR = path.resolve("./licenses");
 if (!fs.existsSync(LICENSES_DIR)) fs.mkdirSync(LICENSES_DIR, { recursive: true });
 
 const GITHUB_REPO = process.env.GITHUB_REPO || "";
-const GIT_SSH_KEY = process.env.GIT_SSH_KEY || ""; // private SSH key contents (optional)
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || ""; // token fallback for HTTPS
+const GIT_SSH_KEY = process.env.GIT_SSH_KEY || "";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 const PASSPHRASE = process.env.ENCRYPTION_KEY || "thayu!";
-const ENCRYPTION_KEY = crypto.createHash("sha256").update(PASSPHRASE).digest(); // 32 bytes
+const ENCRYPTION_KEY = crypto.createHash("sha256").update(PASSPHRASE).digest();
 const PULL_INTERVAL_HOURS = parseInt(process.env.PULL_INTERVAL_HOURS || "24", 10);
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 10000;
+const PORT = parseInt(process.env.PORT || "10000", 10);
 
-// Masked repo display for logs
-function maskedRepoDisplay(repo) {
-  if (!repo) return "(none)";
-  return repo.replace(/:\/\/.*@/, "://***:***@").replace(/:[^/]+@/, ":***@");
-}
-
-// ================= SSH setup (if key provided) =================
-const sshKeyPath = "/tmp/render_id_ed25519"; // writable in Render
+// ================= SSH Setup =================
+const sshKeyPath = "/tmp/render_id_ed25519";
 const sshConfigured = (() => {
   try {
-    if (GIT_SSH_KEY && GIT_SSH_KEY.trim().length > 0) {
-      // write private key to file
+    if (GIT_SSH_KEY?.trim()) {
       fs.writeFileSync(sshKeyPath, GIT_SSH_KEY.trim() + "\n", { mode: 0o600 });
-      // optional SSH config (not strictly required because we'll use GIT_SSH_COMMAND)
       const sshConfig = `Host github.com
   IdentityFile ${sshKeyPath}
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
 `;
-      try { fs.writeFileSync("/tmp/ssh_config_for_render", sshConfig, { mode: 0o600 }); } catch {}
-      // attempt to start ssh-agent and add the key
-      try {
-        execSync(`ssh-add -l >/dev/null 2>&1 || (eval $(ssh-agent -s) >/dev/null && ssh-add ${sshKeyPath})`, { stdio: "inherit", shell: "/bin/bash" });
-      } catch (err) {
-        // ssh-agent may not be available; still set GIT_SSH_COMMAND
-      }
-      // force simple-git / git to use this key
+      fs.writeFileSync("/tmp/ssh_config_for_render", sshConfig, { mode: 0o600 });
       process.env.GIT_SSH_COMMAND = `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
       return true;
     }
@@ -64,11 +52,7 @@ const sshConfigured = (() => {
   return false;
 })();
 
-console.log("🗄 Repo configured:", maskedRepoDisplay(GITHUB_REPO));
-console.log(`🔐 Encryption key: ${PASSPHRASE ? "(set)" : "(using default)"}`);
-console.log(`🔑 SSH key provided: ${sshConfigured ? "yes" : "no (using token/https if configured)"}`);
-
-// ================= Encryption helpers =================
+// ================= Encryption =================
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16;
 
@@ -87,254 +71,180 @@ function decryptText(encryptedStr) {
     const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
     const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
     return decrypted.toString("utf8");
-  } catch (err) {
-    console.warn("⚠️ Decrypt failed:", err.message);
+  } catch {
     return null;
   }
 }
 
-// ================= simple-git setup =================
-// Pass core.sshCommand only if SSH configured; otherwise rely on HTTPS+token if provided.
-const gitOptions = { baseDir: process.cwd(), binary: "git" };
-if (sshConfigured) gitOptions.config = [`core.sshCommand=${process.env.GIT_SSH_COMMAND}`];
+// ================= Git Setup =================
+const git = simpleGit({
+  baseDir: process.cwd(),
+  binary: "git",
+  config: sshConfigured ? [`core.sshCommand=${process.env.GIT_SSH_COMMAND}`] : [],
+});
 
-const git = simpleGit(gitOptions);
-
-// Build an authenticated HTTPS URL if repo is HTTPS and token provided
 function httpsAuthUrl(repoUrl, token) {
-  if (!repoUrl || !repoUrl.startsWith("https://")) return repoUrl;
-  if (!token) return repoUrl;
-  // prefer x-access-token style for GitHub: https://x-access-token:<token>@github.com/owner/repo.git
+  if (!repoUrl?.startsWith("https://") || !token) return repoUrl;
   return repoUrl.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
 }
 
-// ================= Utility: retry wrapper for git ops =================
+// ================= Utility =================
 async function withRetries(fn, attempts = 3, baseDelayMs = 1500) {
   let lastErr;
-  for (let i = 0; i < attempts; ++i) {
+  for (let i = 0; i < attempts; i++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
       const wait = baseDelayMs * Math.pow(2, i);
-      console.warn(`⚠️ Operation failed (attempt ${i + 1}/${attempts}): ${err.message}. Retrying in ${Math.round(wait)}ms...`);
+      console.warn(`⚠️ Attempt ${i + 1}/${attempts} failed: ${err.message}. Retrying in ${wait}ms...`);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
   throw lastErr;
 }
 
-// ================= Git sync helpers =================
+// ================= Git Sync Helpers =================
 async function ensureRepoCloned() {
-  // If there is already a .git, assume repo present. If not, clone.
-  if (!fs.existsSync(path.join(process.cwd(), ".git"))) {
-    console.log("📦 No .git found — cloning license repo...");
+  if (!fs.existsSync(".git")) {
+    console.log("📦 Cloning license repo...");
     let repoUrl = GITHUB_REPO;
     if (!repoUrl) throw new Error("GITHUB_REPO not configured");
-    // prefer SSH (git@github...) if provided, else https with token
-    if (repoUrl.startsWith("https://") && GITHUB_TOKEN) {
+    if (repoUrl.startsWith("https://") && GITHUB_TOKEN)
       repoUrl = httpsAuthUrl(repoUrl, GITHUB_TOKEN);
-    }
     await withRetries(() => git.clone(repoUrl, "."), 4);
     console.log("✅ Repo cloned.");
-  } else {
-    console.log("🔁 Repo already present — skipping clone.");
   }
 }
 
 async function pullLatest() {
   await ensureRepoCloned();
   await withRetries(async () => {
-    // If HTTPS repo and token provided, set remote URL temporarily to auth form (so pull works)
-    if (GITHUB_REPO.startsWith("https://") && GITHUB_TOKEN) {
-      const auth = httpsAuthUrl(GITHUB_REPO, GITHUB_TOKEN);
-      try { await git.remote(["set-url", "origin", auth]); } catch {}
-    }
+    if (GITHUB_REPO.startsWith("https://") && GITHUB_TOKEN)
+      await git.remote(["set-url", "origin", httpsAuthUrl(GITHUB_REPO, GITHUB_TOKEN)]);
     await git.pull("origin", "main");
   }, 4);
 }
 
 async function pushEncryptedAndRestore() {
-  // Encrypt on-disk files, commit & push, then re-decrypt for runtime usage.
   const files = fs.readdirSync(LICENSES_DIR).filter((f) => f.endsWith(".json"));
-  // store originals
   const originals = {};
   for (const f of files) originals[f] = fs.readFileSync(path.join(LICENSES_DIR, f), "utf8");
 
   try {
-    // encrypt each file
     for (const f of files) {
-      const p = path.join(LICENSES_DIR, f);
-      const enc = encryptText(originals[f]);
-      fs.writeFileSync(p, enc, "utf8");
+      fs.writeFileSync(path.join(LICENSES_DIR, f), encryptText(originals[f]), "utf8");
     }
 
-    // stage/commit/push
     await withRetries(async () => {
-      // ensure remote uses auth if HTTPS
-      if (GITHUB_REPO.startsWith("https://") && GITHUB_TOKEN) {
-        const auth = httpsAuthUrl(GITHUB_REPO, GITHUB_TOKEN);
-        try { await git.remote(["set-url", "origin", auth]); } catch {}
-      }
+      if (GITHUB_REPO.startsWith("https://") && GITHUB_TOKEN)
+        await git.remote(["set-url", "origin", httpsAuthUrl(GITHUB_REPO, GITHUB_TOKEN)]);
       await git.add("./*");
       try {
         await git.commit(`🔐 License update @ ${new Date().toISOString()}`);
-      } catch (e) {
-        // nothing to commit (no changes) -> ignore
-      }
+      } catch {}
       await git.push("origin", "main");
-    }, 4, 2000);
+    }, 3, 2000);
   } finally {
-    // restore decrypted files to runtime
-    for (const f of files) {
+    for (const f of files)
       fs.writeFileSync(path.join(LICENSES_DIR, f), originals[f], "utf8");
-    }
   }
 }
 
-// decrypt all files in licenses dir (in-place)
 function decryptAllFiles() {
   const files = fs.readdirSync(LICENSES_DIR).filter((f) => f.endsWith(".json"));
   for (const f of files) {
     const p = path.join(LICENSES_DIR, f);
     const content = fs.readFileSync(p, "utf8");
-    // if looks encrypted (contains ':' and base64), try decrypt
     if (content.includes(":")) {
       const dec = decryptText(content);
-      if (dec !== null) fs.writeFileSync(p, dec, "utf8");
+      if (dec) fs.writeFileSync(p, dec, "utf8");
     }
   }
 }
 
-// ================= License file helpers =================
+// ================= License Helpers =================
 function productToFile(product) {
-  // sanitize product name to file-safe name
   return product.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "") + ".json";
 }
-
 function loadLicenses(product) {
   const file = path.join(LICENSES_DIR, productToFile(product));
-  if (!fs.existsSync(file)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (err) {
-    console.warn("⚠️ Failed to parse license file:", err.message);
-    return [];
-  }
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+}
+function saveLicenses(product, data) {
+  fs.writeFileSync(path.join(LICENSES_DIR, productToFile(product)), JSON.stringify(data, null, 2));
 }
 
-function saveLicenses(product, licenses) {
-  const file = path.join(LICENSES_DIR, productToFile(product));
-  fs.writeFileSync(file, JSON.stringify(licenses, null, 2), "utf8");
-}
-
-// ================= API routes =================
-
-// Verify license
+// ================= API Routes =================
 app.post("/verify", (req, res) => {
-  const { license_key, product } = req.body || {};
-  if (!license_key || !product) return res.status(400).json({ success: false, message: "Missing license_key or product" });
-
-  const licenses = loadLicenses(product);
-  const found = licenses.find((l) => l.license_key === license_key);
-  if (found) return res.json({ success: true, license: found });
-  return res.status(404).json({ success: false, message: "Invalid license key" });
+  const { license_key, product } = req.body;
+  if (!license_key || !product) return res.status(400).json({ success: false, message: "Missing fields" });
+  const found = loadLicenses(product).find((l) => l.license_key === license_key);
+  res.status(found ? 200 : 404).json(found ? { success: true, license: found } : { success: false, message: "Invalid key" });
 });
 
-// Payhip webhook (store license and push encrypted)
 app.post("/webhook/payhip", async (req, res) => {
   try {
-    const { license_key, buyer_email, product_name } = req.body || {};
+    const { license_key, buyer_email, product_name } = req.body;
     if (!license_key || !product_name) return res.status(400).json({ success: false, message: "Invalid webhook data" });
 
     const product = product_name;
     const licenses = loadLicenses(product);
-    // avoid duplicates
     if (!licenses.some((l) => l.license_key === license_key)) {
       licenses.push({ license_key, buyer_email, activated: false, issued_at: new Date().toISOString() });
       saveLicenses(product, licenses);
-      // push to GitHub (encrypted), but don't block success if push fails — log it and return success
-      pushEncryptedAndRestore().catch((err) => console.error("❌ pushToGitHub error:", err.message));
-    } else {
-      console.log("⚠️ License already present, skipping duplicate:", license_key);
+
+      pushEncryptedAndRestore().catch((err) => console.error("❌ GitHub push error:", err.message));
+      uploadLicensesToDropbox().catch((err) => console.error("❌ Dropbox upload error:", err.message));
     }
-
-    return res.json({ success: true, message: "License recorded" });
+    res.json({ success: true, message: "License recorded" });
   } catch (err) {
-    console.error("❌ Webhook handler error:", err);
-    return res.status(500).json({ success: false, message: "Server error saving license." });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// Admin route (list files) — protect with ADMIN_KEY if you use one
 app.get("/admin/licenses", (req, res) => {
-  const ADMIN_KEY = process.env.ADMIN_KEY || "";
-  if (ADMIN_KEY && req.query.key !== ADMIN_KEY) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (ADMIN_KEY && req.query.key !== ADMIN_KEY)
+    return res.status(403).json({ success: false, message: "Unauthorized" });
   const files = fs.readdirSync(LICENSES_DIR).filter((f) => f.endsWith(".json"));
-  const out = {};
-  for (const f of files) {
-    out[f] = JSON.parse(fs.readFileSync(path.join(LICENSES_DIR, f), "utf8"));
-  }
-  res.json(out);
+  res.json(Object.fromEntries(files.map((f) => [f, JSON.parse(fs.readFileSync(path.join(LICENSES_DIR, f), "utf8"))])));
 });
 
-// Root
-app.get("/", (req, res) => {
-  res.send({
-    success: true,
-    message: "Mila License Server running",
-    repo: maskedRepoDisplay(GITHUB_REPO || "(none)"),
-    ssh_key: !!GIT_SSH_KEY,
-    token: !!GITHUB_TOKEN,
-  });
-});
+app.get("/", (_, res) =>
+  res.send({ success: true, message: "Mila License Server running", repo: GITHUB_REPO, ssh: sshConfigured })
+);
 
-// ================= Periodic sync =================
+// ================= Cron Sync =================
 cron.schedule(`0 */${Math.max(1, PULL_INTERVAL_HOURS)} * * *`, async () => {
-  console.log("⏰ Scheduled sync starting...");
+  console.log("⏰ Scheduled sync...");
   try {
     await pullLatest();
     decryptAllFiles();
-    console.log("✅ Scheduled sync complete.");
+    await downloadLicensesFromDropbox();
+    console.log("✅ Sync complete");
   } catch (err) {
-    console.error("❌ Scheduled sync failed:", err.message);
+    console.error("❌ Sync failed:", err.message);
   }
 });
 
 // ================= Startup =================
-(async function startup() {
+(async () => {
   try {
-    // attempt initial sync: prefer SSH clone if GIT_SSH_KEY provided (we already set process.env.GIT_SSH_COMMAND)
-    if (!GITHUB_REPO) console.warn("⚠️ GITHUB_REPO not set — sync disabled.");
-    else {
-      try {
-        await pullLatest();
-        decryptAllFiles();
-        console.log("✅ Initial GitHub sync complete.");
-      } catch (err) {
-        console.warn("⚠️ Initial GitHub sync failed:", err.message);
-        // as last resort, if repo is https and token is present, try with auth URL explicitly
-        if (GITHUB_REPO.startsWith("https://") && GITHUB_TOKEN) {
-          try {
-            const authUrl = httpsAuthUrl(GITHUB_REPO, GITHUB_TOKEN);
-            console.log("ℹ️ Trying HTTPS auth URL fallback (token)...");
-            await withRetries(() => git.clone(authUrl, "."), 3);
-            await pullLatest();
-            decryptAllFiles();
-            console.log("✅ Fallback HTTPS token clone + sync succeeded.");
-          } catch (e) {
-            console.error("❌ Fallback HTTPS sync also failed:", e.message);
-          }
-        }
-      }
+    console.log("⬇️ Attempting Dropbox restore...");
+    await downloadLicensesFromDropbox().catch(() => console.warn("⚠️ Dropbox restore skipped."));
+
+    if (GITHUB_REPO) {
+      await pullLatest().catch(() => console.warn("⚠️ GitHub sync failed, continuing..."));
+      decryptAllFiles();
+    } else {
+      console.warn("⚠️ GITHUB_REPO not set — GitHub sync disabled.");
     }
+
+    console.log("✅ Startup complete.");
   } catch (err) {
-    console.error("❌ Startup error:", err);
+    console.error("❌ Startup error:", err.message);
   } finally {
-    app.listen(PORT, () => {
-      console.log(`🚀 Mila License Server listening on port ${PORT}`);
-      console.log(`🗄 Repo: ${maskedRepoDisplay(GITHUB_REPO || "(none)")}`);
-    });
+    app.listen(PORT, () => console.log(`🚀 Mila License Server running on port ${PORT}`));
   }
 })();
