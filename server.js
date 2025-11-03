@@ -18,16 +18,22 @@ app.use(bodyParser.json());
 // =============================================
 // 🔧 Configuration
 // =============================================
-const git = simpleGit();
 const LICENSES_DIR = './licenses';
 if (!fs.existsSync(LICENSES_DIR)) fs.mkdirSync(LICENSES_DIR);
 
-const GITHUB_REPO = process.env.GITHUB_REPO;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_REPO = process.env.GITHUB_REPO || 'git@github.com:wahinya-music/licenses-db.git';
 const PASSPHRASE = process.env.ENCRYPTION_KEY || 'thayu!';
 const ENCRYPTION_KEY = crypto.createHash('sha256').update(PASSPHRASE).digest(); // 32-byte AES key
 const PULL_INTERVAL_HOURS = parseInt(process.env.PULL_INTERVAL_HOURS || '24');
 const PORT = process.env.PORT || 10000;
+
+// 🧩 Configure git client with SSH
+const git = simpleGit({
+  baseDir: process.cwd(),
+  config: [
+    'core.sshCommand=ssh -i /etc/ssh/render_key -o StrictHostKeyChecking=no'
+  ]
+});
 
 console.log("🗄 GitHub repo:", GITHUB_REPO);
 
@@ -64,7 +70,7 @@ function decrypt(encText) {
 // =============================================
 async function ensureGitRepo() {
   if (!fs.existsSync('.git')) {
-    console.log('📦 Cloning license repo from GitHub (authenticated)...');
+    console.log('📦 Cloning license repo from GitHub via SSH...');
     await git.clone(GITHUB_REPO, '.');
   } else {
     console.log('🔁 Git repo found — skipping clone.');
@@ -121,7 +127,7 @@ async function pushToGitHub(retries = 3, delay = 2000) {
     if (retries > 0) {
       console.warn(`⚠️ Push failed (${err.message}). Retrying in ${delay / 1000}s...`);
       await new Promise(r => setTimeout(r, delay));
-      return pushToGitHub(retries - 1, delay * 2); // exponential backoff
+      return pushToGitHub(retries - 1, delay * 2);
     } else {
       console.error('❌ GitHub push failed permanently:', err.message);
     }
@@ -210,6 +216,7 @@ syncFromGitHub().then(() => {
   app.listen(PORT, () => {
     console.log(`✅ Mila License Server running on port ${PORT}`);
     console.log(`🔑 Using encryption key: ${PASSPHRASE}`);
-    console.log(`🗄 Repo: ${GITHUB_REPO.replace(GITHUB_TOKEN, '***TOKEN***')}`);
+    console.log(`🗄 Repo: ${GITHUB_REPO}`);
+    console.log(`🔐 Using SSH key from Render env`);
   });
 });
