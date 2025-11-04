@@ -1,82 +1,132 @@
+// server.js
 import express from "express";
-import bodyParser from "body-parser";
-import fs from "fs";
 import dotenv from "dotenv";
-import crypto from "crypto";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
+app.use(cors());
 
-const PORT = process.env.PORT || 10000;
-const ADMIN_KEY = process.env.ADMIN_KEY;
-const PAYHIP_WEBHOOK_SECRET = process.env.PAYHIP_WEBHOOK_SECRET;
+// === Load environment variables ===
+const {
+  PORT = 10000,
+  PAYHIP_PRODUCT_SECRET,
+  PAYHIP_WEBHOOK_SECRET,
+  PAYHIP_PRODUCT_KEY,
+  MILA_SHARED_SECRET,
+  ADMIN_KEY,
+} = process.env;
 
-// === Path for local license file ===
-const LICENSES_FILE = "./licenses.json";
-
-// === Load or initialize licenses.json ===
-function loadLicenses() {
-  if (!fs.existsSync(LICENSES_FILE)) {
-    fs.writeFileSync(LICENSES_FILE, JSON.stringify([], null, 2));
-  }
-  return JSON.parse(fs.readFileSync(LICENSES_FILE));
+// === Verify env vars ===
+if (!PAYHIP_PRODUCT_SECRET || !MILA_SHARED_SECRET) {
+  console.error("❌ Missing required environment variables. Check .env file.");
+  process.exit(1);
 }
 
-function saveLicenses(data) {
-  fs.writeFileSync(LICENSES_FILE, JSON.stringify(data, null, 2));
-}
+// === Rate Limiter ===
+const limiter = rateLimit({
+  windowMs: 30 * 1000, // 30 seconds
+  max: 10, // limit each IP to 10 requests per 30s
+});
+app.use(limiter);
 
-// === Helper: Generate unique license key ===
-function generateLicenseKey() {
-  return crypto.randomBytes(16).toString("hex").toUpperCase();
-}
-
-// === Payhip Webhook Endpoint ===
-app.post("/webhook/payhip", (req, res) => {
-  const secret = req.query.secret;
-  if (secret !== PAYHIP_WEBHOOK_SECRET) {
-    return res.status(403).json({ error: "Invalid webhook secret" });
-  }
-
-  const { email, product, order_id } = req.body;
-
-  if (!email || !order_id) {
-    return res.status(400).json({ error: "Missing order data" });
-  }
-
-  let licenses = loadLicenses();
-  let existing = licenses.find((l) => l.email === email);
-  if (existing) {
-    return res.status(200).json({ message: "License already issued", license: existing });
-  }
-
-  const newLicense = {
-    email,
-    product,
-    order_id,
-    license_key: generateLicenseKey(),
-    issued_at: new Date().toISOString(),
-  };
-
-  licenses.push(newLicense);
-  saveLicenses(licenses);
-
-  console.log(`✅ License issued for ${email}: ${newLicense.license_key}`);
-  res.status(200).json({ success: true, license: newLicense });
+// === Root route ===
+app.get("/", (req, res) => {
+  res.json({
+    status: "✅ Mila License Server running",
+    message: "Use POST /verify-license to verify license keys via Payhip.",
+  });
 });
 
-// === Admin Route: View all licenses ===
-app.get("/admin/licenses", (req, res) => {
+// === License Verification Route ===
+app.post("/verify-license", async (req, res) => {
+  try {
+    const sharedSecret = req.headers["x-shared-secret"];
+    if (sharedSecret !== MILA_SHARED_SECRET) {
+      return res.status(401).json({ error: "Unauthorized: Invalid shared secret" });
+    }
+
+    const { licenseKey } = req.body;
+    if (!licenseKey) {
+      return res.status(400).json({ error: "Missing licenseKey" });
+    }
+
+    // === Build Payhip verification request ===
+    const verifyUrl = new URL("https://payhip.com/api/v2/license/verify");
+    verifyUrl.searchParams.set("license_key", licenseKey);
+
+    const payhipResp = await fetch(verifyUrl.toString(), {
+      method: "GET",
+      headers: {
+        "product-secret-key": PAYHIP_PRODUCT_SECRET,
+        Accept: "application/json",
+      },
+    });
+
+    const payhipText = await payhipResp.text();
+    let payhipData;
+
+    try {
+      payhipData = JSON.parse(payhipText);
+    } catch {
+      console.error("❌ Payhip returned non-JSON response:", payhipText);
+      return res.status(400).json({
+        valid: false,
+        error: "Invalid response from Payhip (possibly wrong secret or URL)",
+      });
+    }
+
+    // === Validate response ===
+    if (!payhipData?.data || !payhipData.data.enabled) {
+      return res.status(400).json({ valid: false, error: "License invalid or disabled" });
+    }
+
+    // === Create activation JSON file content ===
+    const activationData = {
+      product: PAYHIP_PRODUCT_KEY || "Unknown",
+      verified_at: new Date().toISOString(),
+      source: "payhip",
+      license_key: payhipData.data.license_key,
+      buyer_email: payhipData.data.buyer_email,
+      uses: payhipData.data.uses,
+      date: payhipData.data.date,
+    };
+
+    // === Send downloadable JSON file ===
+    const fileName = "tamaduni_player_activation.json";
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.status(200).send(JSON.stringify(activationData, null, 2));
+
+  } catch (err) {
+    console.error("❌ Error during verification:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// === Webhook endpoint (optional future use) ===
+app.post("/webhook/payhip", (req, res) => {
+  const { secret } = req.query;
+  if (secret !== PAYHIP_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: "Unauthorized webhook" });
+  }
+
+  console.log("📩 Webhook event received:", req.body);
+  res.status(200).json({ received: true });
+});
+
+// === Admin endpoint (optional) ===
+app.get("/admin/check", (req, res) => {
   const key = req.query.key;
   if (key !== ADMIN_KEY) {
     return res.status(403).json({ error: "Unauthorized" });
   }
-
-  const licenses = loadLicenses();
-  res.json(licenses);
+  res.json({ status: "Admin access granted", time: new Date().toISOString() });
 });
 
+// === Start Server ===
 app.listen(PORT, () => {
   console.log(`🚀 Mila License Server running on port ${PORT}`);
 });
