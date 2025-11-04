@@ -43,7 +43,7 @@ app.get("/", (req, res) => {
 // === License Verification Route ===
 app.post("/verify-license", async (req, res) => {
   const clientSecret = req.headers["x-shared-secret"];
-  if (clientSecret !== process.env.MILA_SHARED_SECRET) {
+  if (clientSecret !== MILA_SHARED_SECRET) {
     return res.status(403).json({ error: "Unauthorized request" });
   }
 
@@ -57,39 +57,17 @@ app.post("/verify-license", async (req, res) => {
     const payhipResp = await fetch(url, {
       method: "GET",
       headers: {
-        "product-secret-key": process.env.PAYHIP_PRODUCT_SECRET,
+        "product-secret-key": PAYHIP_PRODUCT_SECRET,
         "Accept": "application/json",
       },
     });
 
-    const data = await payhipResp.json();
+    const payhipData = await payhipResp.json();
 
-    if (!data?.data?.enabled) {
-      return res.status(400).json({ valid: false, error: "Invalid or disabled license" });
-    }
-
-    const activationData = {
-      product: process.env.PAYHIP_PRODUCT_KEY,
-      verified_at: new Date().toISOString(),
-      source: "payhip",
-      ...data.data,
-    };
-
-    res.setHeader("Content-Disposition", "attachment; filename=tamaduni_player_activation.json");
-    res.setHeader("Content-Type", "application/json");
-    res.send(JSON.stringify(activationData, null, 2));
-  } catch (error) {
-    console.error("Verification error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-    // === Validate response ===
     if (!payhipData?.data || !payhipData.data.enabled) {
       return res.status(400).json({ valid: false, error: "License invalid or disabled" });
     }
 
-    // === Create activation JSON file content ===
     const activationData = {
       product: PAYHIP_PRODUCT_KEY || "Unknown",
       verified_at: new Date().toISOString(),
@@ -100,7 +78,6 @@ app.post("/verify-license", async (req, res) => {
       date: payhipData.data.date,
     };
 
-    // === Send downloadable JSON file ===
     const fileName = "tamaduni_player_activation.json";
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
