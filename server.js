@@ -41,9 +41,10 @@ app.get("/", (req, res) => {
 });
 
 // === License Verification Route ===
+// === License Verification Route ===
 app.post("/verify-license", async (req, res) => {
   const clientSecret = req.headers["x-shared-secret"];
-  if (clientSecret !== MILA_SHARED_SECRET) {
+  if (clientSecret !== process.env.MILA_SHARED_SECRET) {
     return res.status(403).json({ error: "Unauthorized request" });
   }
 
@@ -53,23 +54,27 @@ app.post("/verify-license", async (req, res) => {
   }
 
   try {
+    // === Correct header capitalization ===
     const url = `https://payhip.com/api/v2/license/verify?license_key=${licenseKey}`;
     const payhipResp = await fetch(url, {
       method: "GET",
       headers: {
-        "product-secret-key": PAYHIP_PRODUCT_SECRET,
+        "Product-Secret-Key": process.env.PAYHIP_PRODUCT_SECRET,
         "Accept": "application/json",
       },
     });
 
     const payhipData = await payhipResp.json();
 
+    console.log("📦 Payhip response:", payhipData);
+
     if (!payhipData?.data || !payhipData.data.enabled) {
-      return res.status(400).json({ valid: false, error: "License invalid or disabled" });
+      return res.status(400).json({ valid: false, error: "Invalid or disabled license" });
     }
 
+    // === Create activation JSON ===
     const activationData = {
-      product: PAYHIP_PRODUCT_KEY || "Unknown",
+      product: process.env.PAYHIP_PRODUCT_KEY || "Unknown",
       verified_at: new Date().toISOString(),
       source: "payhip",
       license_key: payhipData.data.license_key,
@@ -78,11 +83,11 @@ app.post("/verify-license", async (req, res) => {
       date: payhipData.data.date,
     };
 
+    // === Send downloadable JSON file ===
     const fileName = "tamaduni_player_activation.json";
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.status(200).send(JSON.stringify(activationData, null, 2));
-
   } catch (err) {
     console.error("❌ Error during verification:", err);
     res.status(500).json({ error: "Internal Server Error" });
