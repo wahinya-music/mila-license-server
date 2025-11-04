@@ -1,30 +1,22 @@
 {
   "name": "mila-license-server",
-  "version": "2.0.0",
-  "description": "Lightweight license verification server for Mila Afrika apps using Payhip webhooks and Render hosting.",
+  "version": "1.0.0",
+  "description": "Stateless Mila License Server connecting Payhip and HISE License Manager",
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "body-parser": "^1.20.3",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.0"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "node-fetch": "^3.3.2"
   },
   "engines": {
     "node": ">=18.x"
   },
-  "keywords": [
-    "license-server",
-    "mila-afrika",
-    "payhip",
-    "render"
-  ],
   "author": "Mila Afrika",
   "license": "MIT"
 }
