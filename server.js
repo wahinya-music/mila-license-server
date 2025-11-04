@@ -42,41 +42,47 @@ app.get("/", (req, res) => {
 
 // === License Verification Route ===
 app.post("/verify-license", async (req, res) => {
+  const clientSecret = req.headers["x-shared-secret"];
+  if (clientSecret !== process.env.MILA_SHARED_SECRET) {
+    return res.status(403).json({ error: "Unauthorized request" });
+  }
+
+  const { licenseKey } = req.body;
+  if (!licenseKey) {
+    return res.status(400).json({ error: "Missing license key" });
+  }
+
   try {
-    const sharedSecret = req.headers["x-shared-secret"];
-    if (sharedSecret !== MILA_SHARED_SECRET) {
-      return res.status(401).json({ error: "Unauthorized: Invalid shared secret" });
-    }
-
-    const { licenseKey } = req.body;
-    if (!licenseKey) {
-      return res.status(400).json({ error: "Missing licenseKey" });
-    }
-
-    // === Build Payhip verification request ===
-    const verifyUrl = new URL("https://payhip.com/api/v2/license/verify");
-    verifyUrl.searchParams.set("license_key", licenseKey);
-
-    const payhipResp = await fetch(verifyUrl.toString(), {
+    const url = `https://payhip.com/api/v2/license/verify?license_key=${licenseKey}`;
+    const payhipResp = await fetch(url, {
       method: "GET",
       headers: {
-        "product-secret-key": PAYHIP_PRODUCT_SECRET,
-        Accept: "application/json",
+        "product-secret-key": process.env.PAYHIP_PRODUCT_SECRET,
+        "Accept": "application/json",
       },
     });
 
-    const payhipText = await payhipResp.text();
-    let payhipData;
+    const data = await payhipResp.json();
 
-    try {
-      payhipData = JSON.parse(payhipText);
-    } catch {
-      console.error("❌ Payhip returned non-JSON response:", payhipText);
-      return res.status(400).json({
-        valid: false,
-        error: "Invalid response from Payhip (possibly wrong secret or URL)",
-      });
+    if (!data?.data?.enabled) {
+      return res.status(400).json({ valid: false, error: "Invalid or disabled license" });
     }
+
+    const activationData = {
+      product: process.env.PAYHIP_PRODUCT_KEY,
+      verified_at: new Date().toISOString(),
+      source: "payhip",
+      ...data.data,
+    };
+
+    res.setHeader("Content-Disposition", "attachment; filename=tamaduni_player_activation.json");
+    res.setHeader("Content-Type", "application/json");
+    res.send(JSON.stringify(activationData, null, 2));
+  } catch (error) {
+    console.error("Verification error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
     // === Validate response ===
     if (!payhipData?.data || !payhipData.data.enabled) {
