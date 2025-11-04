@@ -41,21 +41,23 @@ app.get("/", (req, res) => {
 });
 
 // === License Verification Route ===
-// === License Verification Route ===
 app.post("/verify-license", async (req, res) => {
-  const clientSecret = req.headers["x-shared-secret"];
+  // Accept shared secret from either header or body
+  const clientSecret =
+    req.headers["x-shared-secret"] || req.body.shared_secret;
+
   if (clientSecret !== process.env.MILA_SHARED_SECRET) {
     return res.status(403).json({ error: "Unauthorized request" });
   }
 
-  const { licenseKey } = req.body;
-  if (!licenseKey) {
+  const { license_key, product } = req.body;
+  if (!license_key) {
     return res.status(400).json({ error: "Missing license key" });
   }
 
   try {
-    // === Correct header capitalization ===
-    const url = `https://payhip.com/api/v2/license/verify?license_key=${licenseKey}`;
+    // === Verify license via Payhip API ===
+    const url = `https://payhip.com/api/v2/license/verify?license_key=${license_key}`;
     const payhipResp = await fetch(url, {
       method: "GET",
       headers: {
@@ -65,16 +67,18 @@ app.post("/verify-license", async (req, res) => {
     });
 
     const payhipData = await payhipResp.json();
-
     console.log("📦 Payhip response:", payhipData);
 
+    // === Validate license ===
     if (!payhipData?.data || !payhipData.data.enabled) {
-      return res.status(400).json({ valid: false, error: "Invalid or disabled license" });
+      return res
+        .status(400)
+        .json({ valid: false, error: "Invalid or disabled license" });
     }
 
     // === Create activation JSON ===
     const activationData = {
-      product: process.env.PAYHIP_PRODUCT_KEY || "Unknown",
+      product: product || process.env.PAYHIP_PRODUCT_KEY || "Unknown",
       verified_at: new Date().toISOString(),
       source: "payhip",
       license_key: payhipData.data.license_key,
