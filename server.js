@@ -88,7 +88,7 @@ app.post("/verify-license", async (req, res) => {
     };
 
     // === Send downloadable JSON file ===
-    const fileName = "tamaduni_player_activation.json";
+    const fileName = "curios_player_activation.json";
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.status(200).send(JSON.stringify(activationData, null, 2));
